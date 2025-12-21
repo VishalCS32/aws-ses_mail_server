@@ -4,16 +4,112 @@
 
 ## Architecture Overview
 
-```
-INBOUND FLOW:
-Internet → AWS SES (us-east-1) → S3 Bucket → Lambda → EC2 Webhook (ap-south-1)
-                                                          ↓
-                                               WireGuard VPN (10.200.200.0/24)
-                                                          ↓
-                                               Home Server → Mailbox
+### Inbound Email Flow
 
-OUTBOUND FLOW:
-Home Server → EC2 (port 25) → AWS SES SMTP → Internet
+```mermaid
+flowchart LR
+    subgraph Internet
+        A[📧 Sender]
+    end
+    
+    subgraph AWS["AWS Cloud (us-east-1)"]
+        B[📬 SES Inbound]
+        C[🪣 S3 Bucket]
+        D[⚡ Lambda]
+    end
+    
+    subgraph EC2["AWS EC2 (ap-south-1)"]
+        E[🔗 Webhook :8080]
+        F[📮 Postfix]
+    end
+    
+    subgraph VPN["WireGuard VPN (10.200.200.0/24)"]
+        G[🔒 Encrypted Tunnel]
+    end
+    
+    subgraph Home["Home Server"]
+        H[📮 Postfix]
+        I[📥 Dovecot]
+        J[📁 Virtual Mailbox]
+    end
+    
+    A -->|MX Record| B
+    B -->|Store Email| C
+    C -->|S3 Event| D
+    D -->|HTTP POST| E
+    E -->|Download & Inject| F
+    F -->|Port 25| G
+    G -->|Port 25| H
+    H --> I
+    I --> J
+```
+
+### Outbound Email Flow
+
+```mermaid
+flowchart LR
+    subgraph Home["Home Server"]
+        A[📧 Roundcube/CLI]
+        B[📮 Postfix]
+    end
+    
+    subgraph VPN["WireGuard VPN (10.200.200.0/24)"]
+        C[🔒 Encrypted Tunnel]
+    end
+    
+    subgraph EC2["AWS EC2 (ap-south-1)"]
+        D[📮 Postfix Relay]
+    end
+    
+    subgraph AWS["AWS SES (us-east-1)"]
+        E[📬 SES SMTP :587]
+    end
+    
+    subgraph Internet
+        F[📥 Recipient]
+    end
+    
+    A --> B
+    B -->|Port 25| C
+    C -->|Port 25| D
+    D -->|SASL Auth TLS| E
+    E -->|Delivered| F
+```
+
+### Component Diagram
+
+```mermaid
+graph TB
+    subgraph "AWS us-east-1"
+        SES["SES<br/>Email Receiving"]
+        S3["S3 Bucket<br/>incoming/"]
+        Lambda["Lambda<br/>email-forwarder"]
+    end
+    
+    subgraph "AWS ap-south-1"
+        EC2["EC2 t4g.nano<br/>10.200.200.1"]
+        Webhook["Webhook :8080"]
+        PostfixEC2["Postfix"]
+    end
+    
+    subgraph "Home Network"
+        HomeServer["Home Server<br/>10.200.200.2"]
+        PostfixHome["Postfix"]
+        Dovecot["Dovecot IMAP"]
+        Roundcube["Roundcube"]
+        PostfixAdmin["PostfixAdmin"]
+        Maildir["Virtual Mailboxes<br/>/var/mail/vhosts/"]
+    end
+    
+    SES --> S3
+    S3 --> Lambda
+    Lambda -->|HTTP| Webhook
+    Webhook --> PostfixEC2
+    PostfixEC2 <-->|WireGuard| PostfixHome
+    PostfixHome --> Dovecot
+    Dovecot --> Maildir
+    Roundcube --> Dovecot
+    PostfixAdmin --> Maildir
 ```
 
 ## Cost Breakdown
