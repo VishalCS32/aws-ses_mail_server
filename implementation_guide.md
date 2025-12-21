@@ -41,8 +41,14 @@ graph LR
 - [ ] AWS Account with billing enabled
 - [ ] Domain name (e.g., yourbusiness.com)
 - [ ] Home server with Ubuntu/Debian (or similar)
-- [ ] Static IP or dynamic DNS for home server (for VPN)
+- [ ] Home server with internet connection (no static/public IP needed!)
 - [ ] Basic knowledge of Linux command line
+
+> [!NOTE]
+> Your home server does **NOT** need a static or public IP. WireGuard works perfectly behind NAT because:
+> - Home server initiates the connection to EC2 (which has the Elastic IP)
+> - `PersistentKeepalive` maintains the tunnel through NAT
+> - No port forwarding required on your home router
 
 ---
 
@@ -233,16 +239,17 @@ Create `/etc/wireguard/wg0.conf` on home server:
 Address = 10.200.200.2/24
 PrivateKey = <HOME-PRIVATE-KEY>
 
-# Auto-reconnect script
-PostUp = /etc/wireguard/check-connection.sh
-
 [Peer]
-# EC2 Server
+# EC2 Server (has static Elastic IP)
 PublicKey = <EC2-PUBLIC-KEY>
 Endpoint = <EC2-ELASTIC-IP>:51820
 AllowedIPs = 10.200.200.1/32
+# IMPORTANT: Keeps tunnel alive through NAT (every 25 seconds)
 PersistentKeepalive = 25
 ```
+
+> [!TIP]
+> The `PersistentKeepalive = 25` is crucial! It sends a packet every 25 seconds to keep your home router's NAT mapping active, ensuring the tunnel stays connected even without traffic.
 
 **Enable and start WireGuard:**
 
