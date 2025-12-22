@@ -691,9 +691,173 @@ Access `http://your-server-ip/roundcube` for webmail.
 
 ---
 
-# Phase 9: Maintenance Setup
+# Phase 9: Mobile App Access Setup
 
-## 9.1 Health Check Script (Both Servers)
+## 9.1 Install Nginx Stream Proxy on EC2
+
+This allows mobile apps to connect through EC2 to your home server:
+
+```bash
+# On EC2
+sudo apt install -y nginx-full
+
+# Create stream config for mail ports
+sudo tee /etc/nginx/stream.conf << 'EOF'
+stream {
+    server {
+        listen 143;
+        proxy_pass 10.200.200.2:143;
+    }
+    server {
+        listen 993;
+        proxy_pass 10.200.200.2:993;
+    }
+    server {
+        listen 587;
+        proxy_pass 10.200.200.2:587;
+    }
+    server {
+        listen 465;
+        proxy_pass 10.200.200.2:465;
+    }
+}
+EOF
+
+# Add to nginx.conf (at the end, outside http block)
+echo "include /etc/nginx/stream.conf;" | sudo tee -a /etc/nginx/nginx.conf
+
+sudo nginx -t && sudo systemctl restart nginx
+```
+
+## 9.2 EC2 Security Group - Add Ports
+
+| Port | Protocol | Source | Purpose |
+|------|----------|--------|---------|
+| 143 | TCP | 0.0.0.0/0 | IMAP |
+| 993 | TCP | 0.0.0.0/0 | IMAPS |
+| 587 | TCP | 0.0.0.0/0 | Submission |
+| 465 | TCP | 0.0.0.0/0 | SMTPS |
+
+## 9.3 Enable SMTP Auth on Home Server
+
+```bash
+# Install SASL
+sudo apt install -y libsasl2-modules sasl2-bin
+
+# Configure Postfix for SASL
+sudo postconf -e "smtpd_sasl_auth_enable = yes"
+sudo postconf -e "smtpd_sasl_type = dovecot"
+sudo postconf -e "smtpd_sasl_path = private/auth"
+
+# Configure Dovecot auth for Postfix
+sudo tee /etc/dovecot/conf.d/10-master.conf << 'EOF'
+service imap-login {
+  inet_listener imap { port = 143 }
+  inet_listener imaps { port = 993; ssl = yes }
+}
+
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+EOF
+
+sudo systemctl restart dovecot postfix
+```
+
+## 9.4 Configure master.cf for Mobile Access
+
+Edit `/etc/postfix/master.cf`:
+
+```bash
+# Port 25 - Plain SMTP (NO TLS wrapper)
+smtp      inet  n       -       y       -       -       smtpd
+
+# Port 587 - Submission (STARTTLS)
+submission inet n       -       y       -       -       smtpd
+  -o smtpd_tls_security_level=may
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_client_restrictions=permit
+
+# Port 465 - SMTPS (Implicit TLS)
+smtps     inet  n       -       y       -       -       smtpd
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_client_restrictions=permit
+```
+
+> **CRITICAL:** Port 25 must NOT have `smtpd_tls_wrappermode=yes`!
+
+```bash
+sudo systemctl restart postfix
+```
+
+---
+
+# Phase 10: SSL Certificate (Let's Encrypt)
+
+## 10.1 Install Certbot with Cloudflare
+
+```bash
+sudo apt install -y certbot python3-certbot-dns-cloudflare
+```
+
+## 10.2 Create Cloudflare API Token
+
+1. Cloudflare Dashboard → My Profile → API Tokens
+2. Create Token → Edit zone DNS
+3. Copy the token
+
+```bash
+sudo mkdir -p /etc/letsencrypt
+sudo tee /etc/letsencrypt/cloudflare.ini << 'EOF'
+dns_cloudflare_api_token = YOUR_CLOUDFLARE_API_TOKEN
+EOF
+sudo chmod 600 /etc/letsencrypt/cloudflare.ini
+```
+
+## 10.3 Get Certificate
+
+```bash
+sudo certbot certonly \
+    --dns-cloudflare \
+    --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+    -d mail.yourdomain.com \
+    --non-interactive --agree-tos --email admin@yourdomain.com
+```
+
+## 10.4 Configure Services to Use Certificate
+
+```bash
+# Postfix
+sudo postconf -e "smtpd_tls_cert_file = /etc/letsencrypt/live/mail.yourdomain.com/fullchain.pem"
+sudo postconf -e "smtpd_tls_key_file = /etc/letsencrypt/live/mail.yourdomain.com/privkey.pem"
+
+# Dovecot
+sudo tee /etc/dovecot/conf.d/10-ssl.conf << 'EOF'
+ssl = yes
+ssl_cert = </etc/letsencrypt/live/mail.yourdomain.com/fullchain.pem
+ssl_key = </etc/letsencrypt/live/mail.yourdomain.com/privkey.pem
+EOF
+
+sudo systemctl restart postfix dovecot
+```
+
+## 10.5 Auto-Renewal
+
+```bash
+sudo certbot renew --dry-run
+echo "0 3 1 * * root certbot renew --quiet && systemctl restart postfix dovecot" | sudo tee /etc/cron.d/certbot-renew
+```
+
+---
+
+# Phase 11: Maintenance Setup
+
+## 11.1 Health Check Script
 
 ```bash
 # On Home Server
@@ -721,6 +885,24 @@ echo "*/5 * * * * root /usr/local/bin/mail-health-check.sh" | sudo tee /etc/cron
 
 ---
 
+# Mobile App Configuration
+
+## Settings for Outlook/Gmail/BlueMail
+
+| Setting | Value |
+|---------|-------|
+| **Email** | `yourname@yourdomain.com` |
+| **IMAP Server** | `mail.yourdomain.com` |
+| **IMAP Port** | `993` |
+| **IMAP Security** | SSL/TLS |
+| **SMTP Server** | `mail.yourdomain.com` |
+| **SMTP Port** | `465` (SSL/TLS) or `587` (STARTTLS) |
+| **Username** | `yourname@yourdomain.com` (full email) |
+
+> **Note:** Outlook mobile does not support autodiscover for non-Microsoft servers. You must enter server details manually.
+
+---
+
 # Quick Reference Commands
 
 | Task | Command |
@@ -732,6 +914,7 @@ echo "*/5 * * * * root /usr/local/bin/mail-health-check.sh" | sudo tee /etc/cron
 | Restart Postfix | `sudo systemctl restart postfix` |
 | Restart Dovecot | `sudo systemctl restart dovecot` |
 | Check webhook | `sudo systemctl status email-webhook` |
+| Check nginx | `sudo systemctl status nginx` |
 
 ---
 
@@ -739,19 +922,53 @@ echo "*/5 * * * * root /usr/local/bin/mail-health-check.sh" | sudo tee /etc/cron
 
 ## Email not receiving
 1. Check MX record: `dig MX yourdomain.com +short`
-2. Check S3 for emails
+2. Check S3 for emails in AWS Console
 3. Check Lambda logs in CloudWatch
 4. Check EC2 webhook: `sudo journalctl -u email-webhook -f`
+5. Check EC2 mail queue: `mailq`
+6. Check home server port 25: `sudo netstat -tlnp | grep :25`
 
 ## Email not sending
 1. Check mail queue: `mailq`
 2. Check mail logs: `sudo tail -f /var/log/mail.log`
-3. Verify SES credentials
-4. Check SES sandbox status
+3. Verify SES credentials in `/etc/postfix/sasl_passwd`
+4. Check SES sandbox status in AWS Console
 
-## TLS errors
-- Add `smtp_tls_security_level = may` to Postfix main.cf
+## TLS/SSL Errors
+- EC2 to SES: `sudo postconf -e "smtp_tls_security_level = encrypt"`
+- EC2 to Home: `sudo postconf -e "smtp_tls_security_level = may"`
+- Home port 25: Remove `smtpd_tls_wrappermode=yes` from smtp line in master.cf
+
+## Connection Refused
+- Check if Postfix is running: `sudo systemctl status postfix`
+- Check port listening: `sudo netstat -tlnp | grep :25`
+- Restart Postfix: `sudo systemctl restart postfix`
+
+## Mobile App "Access Denied"
+- Check `/etc/postfix/master.cf` - submission and smtps should have `-o smtpd_client_restrictions=permit`
+- Restart Postfix after changes
+
+---
+
+# Cost Summary
+
+| Service | Monthly Cost |
+|---------|--------------|
+| EC2 t4g.nano | ~$3 |
+| SES | ~$0.10/1000 emails |
+| S3 + Lambda | ~$0.01 |
+| **Total** | **~$3-4/month** |
 
 ---
 
 **Setup Complete!** 🎉
+
+Your business email system is now fully operational with:
+- ✅ Inbound email via AWS SES
+- ✅ Outbound email via AWS SES
+- ✅ Webmail (Roundcube)
+- ✅ User Management (PostfixAdmin)
+- ✅ Mobile App Access (IMAP/SMTP)
+- ✅ SSL Certificate (Let's Encrypt)
+- ✅ Auto-healing health checks
+
