@@ -22,6 +22,57 @@
 12. [SSL Certificates](#ssl-certificates)
 13. [Maintenance Scripts](#maintenance-scripts)
 14. [Troubleshooting Guide](#troubleshooting-guide)
+15. [Cost Breakdown](#cost-breakdown)
+
+---
+
+## Cost Breakdown
+
+### Monthly Costs (Estimated)
+
+| Service | Cost | Notes |
+|---------|------|-------|
+| **EC2 Instance (t3.micro)** | $0.00 | Free Tier (first 12 months, 750 hrs/month) |
+| **EC2 Instance (t3.micro)** | ~$8.50 | After Free Tier expires |
+| **EBS Storage (16 GB gp3)** | $0.00 | Free Tier (30 GB free) |
+| **AWS SES (Inbound)** | $0.00 | Free (first 1,000 emails) |
+| **AWS SES (Outbound)** | $0.10 | Per 1,000 emails sent |
+| **S3 Storage** | ~$0.02 | Email storage (minimal) |
+| **Lambda** | $0.00 | Free Tier (1M requests/month) |
+| **Data Transfer** | ~$0.50 | Varies by usage |
+| **Route 53** | $0.00 | Not needed (use Cloudflare) |
+| **Elastic IP** | $0.00 | Not needed (use Dynamic DNS) |
+| **Cloudflare DNS** | $0.00 | Free plan |
+| **Home Server** | $0.00 | Your own hardware + electricity |
+
+### Total Monthly Cost
+
+| Scenario | Cost |
+|----------|------|
+| **First 12 months (Free Tier)** | **~$0.50 - $2.00/month** |
+| **After Free Tier** | **~$9.00 - $12.00/month** |
+
+### Cost Comparison vs Commercial Email Hosting
+
+| Provider | Cost per User/Month | 10 Users/Month |
+|----------|---------------------|----------------|
+| **This Setup** | **~$0.10 - $1.00** | **~$1 - $10** |
+| Google Workspace | $6.00 | $60 |
+| Microsoft 365 | $6.00 | $60 |
+| Zoho Mail | $1.00 | $10 |
+| FastMail | $5.00 | $50 |
+
+> **Savings:** Up to **90%** compared to commercial solutions, with **unlimited mailboxes!**
+
+### Cost Optimization Tips
+
+1. **Use t3.micro** - Stay in Free Tier or minimize costs
+2. **Use Cloudflare DNS** - Free, no Route 53 needed
+3. **Use Dynamic DNS** - No Elastic IP needed (~$3.60/month saved)
+4. **Clean old emails** - Reduce S3 storage costs
+5. **Set email retention** - Don't store emails forever
+
+---
 
 ## Architecture Overview
 
