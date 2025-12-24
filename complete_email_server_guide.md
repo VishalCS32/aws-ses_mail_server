@@ -1,7 +1,7 @@
 # Complete Email Server Setup Guide
 ## AWS SES + EC2 Relay + Self-Hosted Mail Server with Z-Push ActiveSync
 
-**Domain:** xorianindustries.com  
+**Domain:** yourdomain.com  
 **Architecture:** Hybrid (AWS SES + EC2 + Home Server via WireGuard VPN)
 
 ---
@@ -799,7 +799,7 @@ $CONF['smtp_port'] = '25';
 $CONF['welcome_text'] = <<<EOM
 Hello!
 
-Welcome to your new email account at Xorian Industries.
+Welcome to your new email account at Your Company.
 
 Best regards,
 IT Team
@@ -871,7 +871,7 @@ $config['smtp_host'] = 'localhost:587';
 $config['smtp_user'] = '%u';
 $config['smtp_pass'] = '%p';
 $config['support_url'] = '';
-$config['product_name'] = 'Xorian Industries Webmail';
+$config['product_name'] = 'Your Company Webmail';
 $config['plugins'] = array('archive', 'zipdownload');
 $config['drafts_mbox'] = 'Drafts';
 $config['sent_mbox'] = 'Sent';
@@ -1066,7 +1066,7 @@ sqlite3 "$DB" "SELECT username, email_other FROM mailbox WHERE active='1'" | whi
                 cat << MAIL | /usr/sbin/sendmail -t -f $FROM_EMAIL
 To: $SEND_TO
 From: IT Team <$FROM_EMAIL>
-Subject: Welcome to Xorian Industries Email
+Subject: Welcome to Your Company Email
 
 Hello!
 
