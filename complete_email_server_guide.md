@@ -23,71 +23,174 @@
 13. [Maintenance Scripts](#maintenance-scripts)
 14. [Troubleshooting Guide](#troubleshooting-guide)
 
----
-
 ## Architecture Overview
 
-```
-                         ┌─────────────────────────────────────────────────────────────┐
-                         │                        INTERNET                              │
-                         └─────────────────────────────────────────────────────────────┘
-                                                    │
-                    ┌───────────────────────────────┼───────────────────────────────┐
-                    │                               │                               │
-                    ▼                               ▼                               ▼
-            ┌──────────────┐               ┌──────────────┐               ┌──────────────┐
-            │   INBOUND    │               │   OUTBOUND   │               │    MOBILE    │
-            │    EMAIL     │               │    EMAIL     │               │    ACCESS    │
-            └──────────────┘               └──────────────┘               └──────────────┘
-                    │                               ▲                               │
-                    ▼                               │                               ▼
-            ┌──────────────┐                        │                       ┌──────────────┐
-            │   AWS SES    │                        │                       │    HTTPS     │
-            │   Inbound    │                        │                       │   Port 443   │
-            └──────────────┘                        │                       └──────────────┘
-                    │                               │                               │
-                    ▼                               │                               │
-            ┌──────────────┐               ┌──────────────┐                        │
-            │   S3 Bucket  │               │   AWS SES    │                        │
-            │   Storage    │               │   Outbound   │                        │
-            └──────────────┘               └──────────────┘                        │
-                    │                               ▲                               │
-                    ▼                               │                               │
-            ┌──────────────┐                        │                               │
-            │   Lambda     │                        │                               │
-            │   Function   │                        │                               │
-            └──────────────┘                        │                               │
-                    │                               │                               │
-                    ▼                               │                               ▼
-    ═══════════════════════════════════════════════════════════════════════════════════════
-                                        EC2 INSTANCE (Public IP)
-                                    ┌─────────────────────────────┐
-                                    │  • Nginx (Reverse Proxy)    │
-                                    │  • Postfix (Relay)          │
-                                    │  • WireGuard (VPN)          │
-                                    │  IP: 10.200.200.1           │
-                                    └─────────────────────────────┘
-    ═══════════════════════════════════════════════════════════════════════════════════════
-                                                │
-                                    ┌───────────┴───────────┐
-                                    │   WireGuard Tunnel    │
-                                    │      (Encrypted)      │
-                                    └───────────┬───────────┘
-                                                │
-    ═══════════════════════════════════════════════════════════════════════════════════════
-                                      HOME SERVER (Private)
-                                    ┌─────────────────────────────┐
-                                    │  • Postfix (MTA)            │
-                                    │  • Dovecot (IMAP)           │
-                                    │  • PostfixAdmin             │
-                                    │  • Roundcube                │
-                                    │  • Z-Push (ActiveSync)      │
-                                    │  IP: 10.200.200.2           │
-                                    └─────────────────────────────┘
-    ═══════════════════════════════════════════════════════════════════════════════════════
+### System Architecture Diagram
+
+```mermaid
+flowchart TB
+    subgraph Internet["🌐 INTERNET"]
+        Sender["📧 External Sender"]
+        Recipient["📧 External Recipient"]
+        Mobile["📱 Mobile Device"]
+    end
+    
+    subgraph AWS["☁️ AWS CLOUD"]
+        SES_IN["📥 AWS SES<br/>Inbound"]
+        S3["🪣 S3 Bucket<br/>Email Storage"]
+        Lambda["⚡ Lambda<br/>Webhook Trigger"]
+        SES_OUT["📤 AWS SES<br/>Outbound"]
+    end
+    
+    subgraph EC2["🖥️ EC2 INSTANCE"]
+        Nginx["🔀 Nginx<br/>Reverse Proxy"]
+        Webhook["🪝 Email Webhook<br/>Port 8080"]
+        PostfixEC2["📮 Postfix<br/>Relay"]
+        WG_EC2["🔒 WireGuard<br/>10.200.200.1"]
+    end
+    
+    subgraph Home["🏠 HOME SERVER"]
+        WG_Home["🔒 WireGuard<br/>10.200.200.2"]
+        PostfixHome["📮 Postfix<br/>MTA"]
+        Dovecot["📬 Dovecot<br/>IMAP"]
+        ZPush["📲 Z-Push<br/>ActiveSync"]
+        Roundcube["💻 Roundcube<br/>Webmail"]
+        PostfixAdmin["⚙️ PostfixAdmin"]
+        Mailbox["📁 Mailboxes"]
+    end
+    
+    Sender --> SES_IN
+    SES_IN --> S3
+    S3 --> Lambda
+    Lambda --> Webhook
+    Webhook --> PostfixEC2
+    PostfixEC2 --> WG_EC2
+    WG_EC2 <--> WG_Home
+    WG_Home --> PostfixHome
+    PostfixHome --> Dovecot
+    Dovecot --> Mailbox
+    
+    Mailbox --> Dovecot
+    Dovecot --> PostfixHome
+    PostfixHome --> WG_Home
+    WG_Home --> WG_EC2
+    WG_EC2 --> PostfixEC2
+    PostfixEC2 --> SES_OUT
+    SES_OUT --> Recipient
+    
+    Mobile --> Nginx
+    Nginx --> ZPush
+    ZPush --> Dovecot
+    
+    Roundcube --> Dovecot
+    PostfixAdmin --> Mailbox
 ```
 
+### Inbound Email Flow
+
+```mermaid
+sequenceDiagram
+    participant Sender as 📧 External Sender
+    participant SES as ☁️ AWS SES
+    participant S3 as 🪣 S3 Bucket
+    participant Lambda as ⚡ Lambda
+    participant EC2 as 🖥️ EC2 Webhook
+    participant Postfix as 📮 Postfix (EC2)
+    participant WG as 🔒 WireGuard
+    participant Home as 🏠 Home Postfix
+    participant Dovecot as 📬 Dovecot
+    participant Mailbox as 📁 Mailbox
+    
+    Sender->>SES: Send email to user@domain.com
+    SES->>S3: Store raw email
+    S3->>Lambda: Trigger on new object
+    Lambda->>EC2: POST /webhook with S3 key
+    EC2->>S3: Download email content
+    EC2->>Postfix: sendmail -t
+    Postfix->>WG: Route to 10.200.200.2
+    WG->>Home: Forward via VPN tunnel
+    Home->>Dovecot: Deliver via LMTP
+    Dovecot->>Mailbox: Store in Maildir
+    Note over Mailbox: Email delivered! ✅
+```
+
+### Outbound Email Flow
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant Client as 📱 Email Client
+    participant ZPush as 📲 Z-Push
+    participant Postfix as 📮 Home Postfix
+    participant WG as 🔒 WireGuard
+    participant EC2 as 🖥️ EC2 Postfix
+    participant SES as ☁️ AWS SES
+    participant Recipient as 📧 Recipient
+    
+    User->>Client: Compose & Send
+    Client->>ZPush: Submit via ActiveSync
+    ZPush->>Postfix: sendmail
+    Postfix->>WG: Route to 10.200.200.1
+    WG->>EC2: Forward via VPN tunnel
+    EC2->>SES: Relay via SMTP
+    SES->>Recipient: Deliver email
+    Note over Recipient: Email sent! ✅
+```
+
+### Mobile Push Notification Flow
+
+```mermaid
+sequenceDiagram
+    participant Email as 📧 New Email
+    participant Dovecot as 📬 Dovecot
+    participant ZPush as 📲 Z-Push
+    participant Nginx as 🔀 Nginx (EC2)
+    participant Mobile as 📱 Mobile Device
+    
+    Email->>Dovecot: New email arrives
+    Note over ZPush: Ping connection active
+    ZPush->>Dovecot: Check for changes
+    Dovecot->>ZPush: New email detected!
+    ZPush->>Nginx: Push response
+    Nginx->>Mobile: Notify via HTTPS
+    Note over Mobile: 🔔 Push Notification!
+```
+
+### Component Diagram
+
+```mermaid
+flowchart LR
+    subgraph Ports["📡 Port Configuration"]
+        P25["Port 25<br/>SMTP"]
+        P80["Port 80<br/>HTTP"]
+        P443["Port 443<br/>HTTPS/ActiveSync"]
+        P465["Port 465<br/>SMTPS"]
+        P587["Port 587<br/>Submission"]
+        P993["Port 993<br/>IMAPS"]
+        P8080["Port 8080<br/>Webhook"]
+        P9090["Port 9090<br/>Roundcube"]
+        P9091["Port 9091<br/>PostfixAdmin"]
+        P51820["Port 51820<br/>WireGuard"]
+    end
+```
+
+### Services Overview
+
+| Location | Service | Port | Purpose |
+|----------|---------|------|---------|
+| **EC2** | Nginx | 80, 443 | HTTPS proxy, ActiveSync |
+| **EC2** | Postfix | 25 | Mail relay to SES |
+| **EC2** | Webhook | 8080 | Receive from Lambda |
+| **EC2** | WireGuard | 51820 | VPN tunnel |
+| **Home** | Postfix | 25, 587, 465 | Mail delivery |
+| **Home** | Dovecot | 143, 993 | IMAP access |
+| **Home** | Z-Push | 80 | ActiveSync backend |
+| **Home** | Roundcube | 9090 | Webmail |
+| **Home** | PostfixAdmin | 9091 | User management |
+
 ---
+
+
 
 ## Prerequisites
 
